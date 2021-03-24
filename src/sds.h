@@ -84,7 +84,12 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
 
+/* 获得一个sds的长度*/
 static inline size_t sdslen(const sds s) {
+    /* 说明s是sdshdr buf的开头，
+    通过-1 获得flags, 表示的是sds的类型，
+    接着通过sds中的len作为长度，sdshdr5比较特殊，
+    直接将长度存在flags中*/
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
         case SDS_TYPE_5:
@@ -101,6 +106,7 @@ static inline size_t sdslen(const sds s) {
     return 0;
 }
 
+/* 获得一个sds的可用空间是 alloc-len */
 static inline size_t sdsavail(const sds s) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -127,6 +133,9 @@ static inline size_t sdsavail(const sds s) {
     return 0;
 }
 
+/* setlen就是将len设置到newlen,
+一般就是直接设置len，如果是sdshdr5，
+flags设置为newlen*8 */
 static inline void sdssetlen(sds s, size_t newlen) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -151,6 +160,8 @@ static inline void sdssetlen(sds s, size_t newlen) {
     }
 }
 
+
+/* 同理setlen 不过是newlen = len+inc */
 static inline void sdsinclen(sds s, size_t inc) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -177,6 +188,7 @@ static inline void sdsinclen(sds s, size_t inc) {
 }
 
 /* sdsalloc() = sdsavail() + sdslen() */
+/* 分配的buf大小 */
 static inline size_t sdsalloc(const sds s) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {
@@ -194,6 +206,7 @@ static inline size_t sdsalloc(const sds s) {
     return 0;
 }
 
+/*  设置分配的大小，一般在分配内存之后调用 */
 static inline void sdssetalloc(sds s, size_t newlen) {
     unsigned char flags = s[-1];
     switch(flags&SDS_TYPE_MASK) {

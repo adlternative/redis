@@ -63,6 +63,7 @@ void zlibc_free(void *ptr) {
 /* When using the libc allocator, use a minimum allocation size to match the
  * jemalloc behavior that doesn't return NULL in this case.
  */
+/* 最小是8 */
 #define MALLOC_MIN_SIZE(x) ((x) > 0 ? (x) : sizeof(long))
 
 /* Explicitly override malloc/free etc when using tcmalloc. */
@@ -96,14 +97,19 @@ static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
 /* Try allocating memory, and return NULL if failed.
  * '*usable' is set to the usable size if non NULL. */
+/* 分配失败设置为NULL */
 void *ztrymalloc_usable(size_t size, size_t *usable) {
     ASSERT_NO_SIZE_OVERFLOW(size);
     void *ptr = malloc(MALLOC_MIN_SIZE(size)+PREFIX_SIZE);
 
     if (!ptr) return NULL;
 #ifdef HAVE_MALLOC_SIZE
+    /* 获得是malloc真实分配的大小（比如为了内存对齐）
+      然后redis将该值 给加给全局的一个计算总内存的变量上。
+    */
     size = zmalloc_size(ptr);
     update_zmalloc_stat_alloc(size);
+    /* 然后用这个真实分配的大小作为可用大小 */
     if (usable) *usable = size;
     return ptr;
 #else
@@ -206,8 +212,10 @@ void *ztryrealloc_usable(void *ptr, size_t size, size_t *usable) {
     void *newptr;
 
     /* not allocating anything, just redirect to free. */
+    /* realloc到0大小 意味着我们需要Free */
     if (size == 0 && ptr != NULL) {
         zfree(ptr);
+        /* 可用大小设置为0 */
         if (usable) *usable = 0;
         return NULL;
     }
@@ -288,6 +296,7 @@ void zfree(void *ptr) {
 
     if (ptr == NULL) return;
 #ifdef HAVE_MALLOC_SIZE
+    /* 原子的减少全局分配内存计数器的值 */
     update_zmalloc_stat_free(zmalloc_size(ptr));
     free(ptr);
 #else
