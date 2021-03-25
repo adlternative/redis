@@ -47,6 +47,7 @@
 
 /* Fast tolower() alike function that does not care about locale
  * but just returns a-z instead of A-Z. */
+/* tolower */
 int siptlw(int c) {
     if (c >= 'A' && c <= 'Z') {
         return c+('a'-'A');
@@ -113,6 +114,8 @@ int siptlw(int c) {
         v2 = ROTL(v2, 32);                                                     \
     } while (0)
 
+/* k是传入的哈希函数种子，in是输入的数据,intlen指定长度，k是种子，返回一个8Bit的数，
+可以逐个字节转2位16进制，这样就可以获得一个长度为16的16进制字符串 */
 uint64_t siphash(const uint8_t *in, const size_t inlen, const uint8_t *k) {
 #ifndef UNALIGNED_LE_CPU
     uint64_t hash;
@@ -132,7 +135,7 @@ uint64_t siphash(const uint8_t *in, const size_t inlen, const uint8_t *k) {
     v2 ^= k0;
     v1 ^= k1;
     v0 ^= k0;
-
+    /* 每次取8位1B进行计算 */
     for (; in != end; in += 8) {
         m = U8TO64_LE(in);
         v3 ^= m;
@@ -171,7 +174,7 @@ uint64_t siphash(const uint8_t *in, const size_t inlen, const uint8_t *k) {
     return b;
 #endif
 }
-
+/* 比siphash就只多了一步：每个字节如果是大写则转小写 */
 uint64_t siphash_nocase(const uint8_t *in, const size_t inlen, const uint8_t *k)
 {
 #ifndef UNALIGNED_LE_CPU
@@ -194,6 +197,7 @@ uint64_t siphash_nocase(const uint8_t *in, const size_t inlen, const uint8_t *k)
     v0 ^= k0;
 
     for (; in != end; in += 8) {
+        /* 将其中是a-zA-Z转换成小写 */
         m = U8TO64_LE_NOCASE(in);
         v3 ^= m;
 
@@ -334,25 +338,33 @@ int siphash_test(void) {
     uint64_t h1, h2;
     h1 = siphash((uint8_t*)"hello world",11,(uint8_t*)"1234567812345678");
     h2 = siphash_nocase((uint8_t*)"hello world",11,(uint8_t*)"1234567812345678");
-    if (h1 != h2) fails++;
-
+    if (h1 != h2) {
+        printf("failed in line:%d\n",__LINE__);
+        fails++;
+    }
     h1 = siphash((uint8_t*)"hello world",11,(uint8_t*)"1234567812345678");
     h2 = siphash_nocase((uint8_t*)"HELLO world",11,(uint8_t*)"1234567812345678");
-    if (h1 != h2) fails++;
-
+    if (h1 != h2) {
+        printf("failed in line:%d\n",__LINE__);
+        fails++;
+    }
     h1 = siphash((uint8_t*)"HELLO world",11,(uint8_t*)"1234567812345678");
     h2 = siphash_nocase((uint8_t*)"HELLO world",11,(uint8_t*)"1234567812345678");
-    if (h1 == h2) fails++;
-
+    if (h1 != h2) {
+        printf("failed in line:%d\n",__LINE__);
+        fails++;
+    }
     if (!fails) return 0;
     return 1;
 }
 
 int main(void) {
-    if (siphash_test() == 0) {
+      int failed = siphash_test();
+    if (failed== 0) {
         printf("SipHash test: OK\n");
         return 0;
     } else {
+        printf("failed:%d\n",failed);
         printf("SipHash test: FAILED\n");
         return 1;
     }

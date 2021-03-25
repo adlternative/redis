@@ -48,16 +48,17 @@
 #define DICT_NOTUSED(V) ((void) V)
 
 typedef struct dictEntry {
-    void *key;
+    void *key;/* 键 */
     union {
         void *val;
         uint64_t u64;
         int64_t s64;
         double d;
-    } v;
-    struct dictEntry *next;
+    } v;/* 值 四种不同的模式（一个指针指向一种数据对象,8B unsigned int，8B int, double） */
+    struct dictEntry *next;/* 这里就是一个哈希链 */
 } dictEntry;
 
+/* 各种处理哈希表或者哈希项的函数 */
 typedef struct dictType {
     uint64_t (*hashFunction)(const void *key);
     void *(*keyDup)(void *privdata, const void *key);
@@ -70,25 +71,29 @@ typedef struct dictType {
 
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
+/* 哈希表结构 */
 typedef struct dictht {
-    dictEntry **table;
-    unsigned long size;
-    unsigned long sizemask;
-    unsigned long used;
+    dictEntry **table;/* 哈希项数组，每个哈希项维护一个哈希链表 */
+    unsigned long size;/* 哈希项数组的大小 */
+    unsigned long sizemask;/* size-1 作为掩码　e.g. size=7 sizemask=6;
+    13&6=1　直接放到table[1] */
+    unsigned long used;/* 已经使用的数量 */
 } dictht;
 
+/* 字典 */
 typedef struct dict {
-    dictType *type;
-    void *privdata;
-    dictht ht[2];
+    dictType *type;/* 成员函数 */
+    void *privdata;/* 私有数据，暂时还有一点不明白意思 */
+    dictht ht[2];/* 维护俩个哈希表 */
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    int16_t pauserehash; /* If >0 rehashing is paused (<0 indicates coding error) */
+    int16_t pauserehash;/* 暂停rehash　*/ /* If >0 rehashing is paused (<0 indicates coding error) */
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
  * dictAdd, dictFind, and other functions against the dictionary even while
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
  * should be called while iterating. */
+/* 字典的迭代器 */
 typedef struct dictIterator {
     dict *d;
     long index;
