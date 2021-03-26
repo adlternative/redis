@@ -77,7 +77,7 @@ typedef struct dictht {
     unsigned long size;/* 哈希项数组的大小 */
     unsigned long sizemask;/* size-1 作为掩码　e.g. size=7 sizemask=6;
     13&6=1　直接放到table[1] */
-    unsigned long used;/* 已经使用的数量 */
+    unsigned long used;/* 这个不是使用中的桶的数量，而是哈希项的数量 */
 } dictht;
 
 /* 字典 */
