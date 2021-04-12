@@ -334,6 +334,7 @@ typedef struct zlentry {
 #define ZIP_ENCODING_SIZE_INVALID 0xff
 /* Return the number of bytes required to encode the entry type + length.
  * On error, return ZIP_ENCODING_SIZE_INVALID */
+/* 返回存储编码的大小 */
 static inline unsigned int zipEncodingLenSize(unsigned char encoding) {
     if (encoding == ZIP_INT_16B || encoding == ZIP_INT_32B ||
         encoding == ZIP_INT_24B || encoding == ZIP_INT_64B ||
@@ -350,11 +351,13 @@ static inline unsigned int zipEncodingLenSize(unsigned char encoding) {
     return ZIP_ENCODING_SIZE_INVALID;
 }
 
+/* 似乎没有人调用它 检验编码违法 */
 #define ZIP_ASSERT_ENCODING(encoding) do {                                     \
     assert(zipEncodingLenSize(encoding) != ZIP_ENCODING_SIZE_INVALID);         \
 } while (0)
 
 /* Return bytes needed to store integer encoded by 'encoding' */
+/* 返回存储整数所需要的比特数 */
 static inline unsigned int zipIntSize(unsigned char encoding) {
     switch(encoding) {
     case ZIP_INT_8B:  return 1;
@@ -366,6 +369,7 @@ static inline unsigned int zipIntSize(unsigned char encoding) {
     if (encoding >= ZIP_INT_IMM_MIN && encoding <= ZIP_INT_IMM_MAX)
         return 0; /* 4 bit immediate */
     /* bad encoding, covered by a previous call to ZIP_ASSERT_ENCODING */
+    /* 编译器优化：__builtin_unreachable */
     redis_unreachable();
     return 0;
 }
@@ -382,6 +386,11 @@ static inline unsigned int zipIntSize(unsigned char encoding) {
  *
  * The function returns the number of bytes used by the encoding/length
  * header stored in 'p'. */
+/* 如果p是null,那么我们就根据encoding的内容
+int下返回1,str返回1,2,5 
+如果p存在，则我们将数据的大小rawlen填充到编码中
+拷贝到p上
+*/
 unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, unsigned int rawlen) {
     unsigned char len = 1, buf[5];
 
@@ -469,6 +478,7 @@ unsigned int zipStoreEntryEncoding(unsigned char *p, unsigned char encoding, uns
 
 /* Encode the length of the previous entry and write it to "p". This only
  * uses the larger encoding (required in __ziplistCascadeUpdate). */
+/* 存储大的前项长度的时候 p[0]直接用254,然后将前项长度len存储到p+1后面的四字节中 */
 int zipStorePrevEntryLengthLarge(unsigned char *p, unsigned int len) {
     uint32_t u32;
     if (p != NULL) {
@@ -482,10 +492,13 @@ int zipStorePrevEntryLengthLarge(unsigned char *p, unsigned int len) {
 
 /* Encode the length of the previous entry and write it to "p". Return the
  * number of bytes needed to encode this length if "p" is NULL. */
+/* p=null的时候是直接根据检验传入的前项大小长度是否<254,如果是则返回5，否则返回1
+（作为存储前项的大小的大小） */
 unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
     if (p == NULL) {
         return (len < ZIP_BIG_PREVLEN) ? 1 : sizeof(uint32_t) + 1;
     } else {
+        /* 如果p在的话，将前项大小存到p后的一个字节或5个字节中 */
         if (len < ZIP_BIG_PREVLEN) {
             p[0] = len;
             return 1;
@@ -497,8 +510,9 @@ unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
 
 /* Return the number of bytes used to encode the length of the previous
  * entry. The length is returned by setting the var 'prevlensize'. */
-/* 返回previous_entry_length段的长度 如果第一个字节存的数要 >= 254，
-那么就说明项的长度为5*/
+/* 返回previous_entry_length段的长度 如果前项的长度<254
+那么就说明我们只用一字节就可以保存前项长度，
+否则5字节保存前项长度 */
 #define ZIP_DECODE_PREVLENSIZE(ptr, prevlensize) do {                          \
     if ((ptr)[0] < ZIP_BIG_PREVLEN) {                                          \
         (prevlensize) = 1;                                                     \
@@ -514,7 +528,7 @@ unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
  * The length of the previous entry is stored in 'prevlen', the number of
  * bytes needed to encode the previous entry length are stored in
  * 'prevlensize'. */
-/* 如果长度是1则直接使用第一个字节的内容作为前项长度，
+/* 如果存储前项长度的长度是1则直接使用第一个字节的内容作为前项长度，
 否则前项长度是后4位的值（貌似还是反着存储的） */
 #define ZIP_DECODE_PREVLEN(ptr, prevlensize, prevlen) do {                     \
     ZIP_DECODE_PREVLENSIZE(ptr, prevlensize);                                  \
@@ -545,7 +559,10 @@ unsigned int zipStorePrevEntryLength(unsigned char *p, unsigned int len) {
  * is needed. */
 int zipPrevLenByteDiff(unsigned char *p, unsigned int len) {
     unsigned int prevlensize;
+    /* prevlensize=保存前项大小的大小 */
     ZIP_DECODE_PREVLENSIZE(p, prevlensize);
+    /* 将本项大小len算出(下一个项存储本项大小的大小)
+    与本项存储的前一个项的大小的大小 */
     return zipStorePrevEntryLength(NULL, len) - prevlensize;
 }
 
@@ -555,9 +572,11 @@ int zipTryEncoding(unsigned char *entry, unsigned int entrylen, long long *v, un
     long long value;
 
     if (entrylen >= 32 || entrylen == 0) return 0;
+    /* 若能转换成longlong */
     if (string2ll((char*)entry,entrylen,&value)) {
         /* Great, the string can be encoded. Check what's the smallest
          * of our encoding types that can hold this value. */
+        /* 以最小的编码存到encoding中 */
         if (value >= 0 && value <= 12) {
             *encoding = ZIP_INT_IMM_MIN+value;
         } else if (value >= INT8_MIN && value <= INT8_MAX) {
@@ -571,6 +590,7 @@ int zipTryEncoding(unsigned char *entry, unsigned int entrylen, long long *v, un
         } else {
             *encoding = ZIP_INT_64B;
         }
+        /* longlong值传出 */
         *v = value;
         return 1;
     }
@@ -645,6 +665,7 @@ int64_t zipLoadInteger(unsigned char *p, unsigned char encoding) {
  * will assert that this element is valid, so it can be freely used.
  * Generally functions such ziplistGet assume the input pointer is already
  * validated (since it's the return value of another function). */
+/* 一般需要先保证安全了再调用它：不安全的获得一个p之后的一个项的内容填入到e中 */
 static inline void zipEntry(unsigned char *p, zlentry *e) {
     ZIP_DECODE_PREVLEN(p, e->prevrawlensize, e->prevrawlen);
     ZIP_ENTRY_ENCODING(p + e->prevrawlensize, e->encoding);
@@ -748,7 +769,7 @@ static inline int zipEntrySafe(unsigned char* zl, size_t zlbytes, unsigned char 
 }
 
 /* Return the total number of bytes used by the entry pointed to by 'p'. */
-/* 貌似是获得这个项的比特长度= 头长度加数据长度 */
+/* 获得这个项的大小 == 头长度加数据长度 */
 static inline unsigned int zipRawEntryLengthSafe(unsigned char* zl, size_t zlbytes, unsigned char *p) {
     zlentry e;
     /* 这里调用了zipEntrySafe貌似将项的信息获取到了对象e中 */
@@ -775,7 +796,7 @@ unsigned char *ziplistNew(void) {
     /* |zlbytes|zltail|zllen|zlend| */
     unsigned int bytes = ZIPLIST_HEADER_SIZE+ZIPLIST_END_SIZE;
     unsigned char *zl = zmalloc(bytes);
-    /* *zlbytes 填入 分配的空间的大小 */
+    /* *zlbytes 填入 分配的空间的大小 暂时来说就是头的大小加上end的大小 */
     ZIPLIST_BYTES(zl) = intrev32ifbe(bytes);
     /* 将ztail标记到 zllen后面 */
     ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(ZIPLIST_HEADER_SIZE);
@@ -814,36 +835,51 @@ unsigned char *ziplistResize(unsigned char *zl, unsigned int len) {
  *
  * The pointer "p" points to the first entry that does NOT need to be
  * updated, i.e. consecutive fields MAY need an update. */
+/* 连锁更新 */
 unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
     zlentry cur;
     size_t prevlen, prevlensize, prevoffset; /* Informat of the last changed entry. */
-    size_t firstentrylen; /* Used to handle insert at head. */
-    size_t rawlen, curlen = intrev32ifbe(ZIPLIST_BYTES(zl));
+    size_t firstentrylen; /* Used to handle insert at head. */ /* 首项长度 */
+    size_t rawlen, curlen = intrev32ifbe(ZIPLIST_BYTES(zl)); /* 当前压缩列表大小 */
     size_t extra = 0, cnt = 0, offset;
     size_t delta = 4; /* Extra bytes needed to update a entry's prevlen (5-1). */
-    unsigned char *tail = zl + intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl));
+    unsigned char *tail = zl + intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl));/* 获得尾节点的位置 */
 
     /* Empty ziplist */
+    /* 空链表直接返回 */
     if (p[0] == ZIP_END) return zl;
-
+    /* 在push的情况下个 p恰好指向下一个项，我们将所有的数据填入到一个Entry中 */
     zipEntry(p, &cur); /* no need for "safe" variant since the input pointer was validated by the function that returned it. */
+    /* 获得p之后的第一个entry大小也就是它自己的header大小加上数据大小 */
     firstentrylen = prevlen = cur.headersize + cur.len;
+    /* 然后再获得如果下一个项想存本项的大小prevlen的大小prevlensize */
     prevlensize = zipStorePrevEntryLength(NULL, prevlen);
+    /* 然后记录当前项的偏移 */
     prevoffset = p - zl;
+    /* 然后p跳到下一个项中 */
     p += prevlen;
 
     /* Iterate ziplist to find out how many extra bytes do we need to update it. */
+    /* 然后在循环中 */
     while (p[0] != ZIP_END) {
+        /* 将现在的项保存到cur中 */
         assert(zipEntrySafe(zl, curlen, p, &cur, 0));
-
+        /* 如果前一个项的大小不变则break退出 */
         /* Abort when "prevlen" has not changed. */
         if (cur.prevrawlen == prevlen) break;
 
         /* Abort when entry's "prevlensize" is big enough. */
+        /* 如果当前项原来用来记录前一个项的大小的大小 >= 现在需要记录前一个项的大小
+        */
+        /* 空间够大则就break; */
         if (cur.prevrawlensize >= prevlensize) {
+            /* 如果需要记录的大小相等 */
             if (cur.prevrawlensize == prevlensize) {
+                /* 那么我们将前一项的长度prevlen保存到这一项中 */
                 zipStorePrevEntryLength(p, prevlen);
             } else {
+                /* 否则说明之前可能需要5字节保存现在只需要1字节，但是我们依旧用5字节保存，
+                避免不必要的“抖动”，毕竟用5字节损失的空间比时间来说实在太小了。 */
                 /* This would result in shrinking, which we want to avoid.
                  * So, set "prevlen" in the available bytes. */
                 zipStorePrevEntryLengthLarge(p, prevlen);
@@ -852,62 +888,82 @@ unsigned char *__ziplistCascadeUpdate(unsigned char *zl, unsigned char *p) {
         }
 
         /* cur.prevrawlen means cur is the former head entry. */
+        /* 现在说明空间不够了 那么 要么当前项本来没有前一项，要么当前项的记录prev大小为1
+        加上4 == 前项长度所需记录5 （也就是我们当前项需要更大的空间去记录前项） */
         assert(cur.prevrawlen == 0 || cur.prevrawlen + delta == prevlen);
 
         /* Update prev entry's info and advance the cursor. */
-        rawlen = cur.headersize + cur.len;
-        prevlen = rawlen + delta; 
-        prevlensize = zipStorePrevEntryLength(NULL, prevlen);
-        prevoffset = p - zl;
-        p += rawlen;
-        extra += delta;
-        cnt++;
+        /* 更新前一个项的信息 */
+        rawlen = cur.headersize + cur.len; /* 记录之前的当前项的大小 */
+        prevlen = rawlen + delta; /* 记录新的本项大小（需要额外的4B） */
+        prevlensize = zipStorePrevEntryLength(NULL, prevlen); /* 然后算出下一个项存本项长度需要的字节的数 */
+        prevoffset = p - zl; /* 算出本项的偏移量 */
+        p += rawlen; /* 然后游标p移动到下一个项 */
+        extra += delta; /* 更新所需要的额外空间大小 */
+        cnt++; /* 链条上需要更新的数量++ */
     }
 
+    /* 没有需要额外分配的空间，那么我们直接返回 */
     /* Extra bytes is zero all update has been done(or no need to update). */
     if (extra == 0) return zl;
 
     /* Update tail offset after loop. */
+    /* 如果连锁的终点是tail */
     if (tail == zl + prevoffset) {
         /* When the the last entry we need to update is also the tail, update tail offset
          * unless this is the only entry that was updated (so the tail offset didn't change). */
+        /* 那么我们需要考虑尾偏移可以少移动4 */
         if (extra - delta != 0) {
             ZIPLIST_TAIL_OFFSET(zl) =
                 intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+extra-delta);
         }
     } else {
         /* Update the tail offset in cases where the last entry we updated is not the tail. */
+        /* 那么我们需要考虑尾偏移就是连锁总体需要的扩容量 */
         ZIPLIST_TAIL_OFFSET(zl) =
             intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+extra);
     }
 
     /* Now "p" points at the first unchanged byte in original ziplist,
      * move data after that to new ziplist. */
+    /* 现在p指向了压缩列表上第一个不改变的比特大小的项 */
     offset = p - zl;
+    /* 我们先扩容*/
     zl = ziplistResize(zl, curlen + extra);
     p = zl + offset;
+    /* 然后将 p之后的内容向后移动到 p+extra 需要移动的大小不包括最后的一字节 */
     memmove(p + extra, p, curlen - offset - 1);
-    p += extra;
+    p += extra;/* 更新列表上第一个不改变的比特大小的项的位置 */
 
     /* Iterate all entries that need to be updated tail to head. */
     while (cnt) {
+        /* zl+prevoffset现在在最后一个需要扩容的项上，我们将它获取到cur中 */
         zipEntry(zl + prevoffset, &cur); /* no need for "safe" variant since we already iterated on all these entries above. */
+        /* 然后我们获得其原来的大小 */
         rawlen = cur.headersize + cur.len;
+        /* 然后将这个项偏移prevrawlensize(1)字节的内容全部后移动 */
         /* Move entry to tail and reset prevlen. */
-        memmove(p - (rawlen - cur.prevrawlensize), 
-                zl + prevoffset + cur.prevrawlensize, 
-                rawlen - cur.prevrawlensize);
-        p -= (rawlen + delta);
+        memmove(p - (rawlen - cur.prevrawlensize),/* 注意到现在p已经向后移动了extra大小了，p指向下一个项
+                                                    所以我们这里的移动终点就是 p减去这个项的大小+1,
+                                                    我们只需要将该项prevlen后面的内容向后移动就行 */
+                zl + prevoffset + cur.prevrawlensize,/* 从prevlen后开始 */
+                rawlen - cur.prevrawlensize);/* 移动大小是原始的大小 - 1 */
+        p -= (rawlen + delta); /* 更新游标到该项新的起始地址 */
         if (cur.prevrawlen == 0) {
+            /* 暂时无法苟同cur.prevrawlen==0这种情况,
+            此时的cur至少也是push插入项的下一个项的下一个项，因为插入项的下一个项已经算扩容过了也记录了插入项prelen，
+            至少在push中这种情况不会发生,可能在其他情况下出现吧(比如merge)... */
             /* "cur" is the previous head entry, update its prevlen with firstentrylen. */
+            /* 更新其prevlen=firstentrylen */
             zipStorePrevEntryLength(p, firstentrylen);
         } else {
             /* An entry's prevlen can only increment 4 bytes. */
+            /* 更新其prevlen+=4 */
             zipStorePrevEntryLength(p, cur.prevrawlen+delta);
         }
         /* Foward to previous entry. */
-        prevoffset -= cur.prevrawlen;
-        cnt--;
+        prevoffset -= cur.prevrawlen; /* 现在我们就可以通过现在的新前项偏移向前移动了 */
+        cnt--; /* 计数-- */
     }
     return zl;
 }
@@ -989,6 +1045,8 @@ unsigned char *__ziplistDelete(unsigned char *zl, unsigned char *p, unsigned int
 }
 
 /* Insert item at "p". */
+/* 在 p 插入一个项 s 长度是slen
+作为Insert和Push的内部函数使用 */
 unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned char *s, unsigned int slen) {
     size_t curlen = intrev32ifbe(ZIPLIST_BYTES(zl)), reqlen, newlen;
     unsigned int prevlensize, prevlen = 0;
@@ -1001,67 +1059,109 @@ unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned cha
     zlentry tail;
 
     /* Find out prevlen for the entry that is inserted. */
-    /* 如果插入点p不在结尾 */
+    /* 尤其在rpush的时候 p[0] == ZIP_END */
+    /* 如果插入点p不在结尾 (如果是空列表而且是头插或者尾插则必然p在结尾) */
     if (p[0] != ZIP_END) {
         /* 本项记录前项的大小prevlen
         记录的长度为prevlensize */
         ZIP_DECODE_PREVLEN(p, prevlensize, prevlen);
     } else {
-        /* 如果p在结尾，则定位到列表最后一项的位置ptail */
+        /* 定位到列表最后一项的位置ptail */
         unsigned char *ptail = ZIPLIST_ENTRY_TAIL(zl);
+        /* 如果整个列表不是空的 */
         if (ptail[0] != ZIP_END) {
+            /* 获得结尾项的大小并存储到prevlen中 */
             prevlen = zipRawEntryLengthSafe(zl, curlen, ptail);
         }
     }
 
     /* See if the entry can be encoded */
+    /* 看是不是能存为整数 */
     if (zipTryEncoding(s,slen,&value,&encoding)) {
         /* 'encoding' is set to the appropriate integer encoding */
+        /* 返回整数数据的存储大小 */
         reqlen = zipIntSize(encoding);
     } else {
         /* 'encoding' is untouched, however zipStoreEntryEncoding will use the
          * string length to figure out how to encode it. */
+        /* 说明得以字符串存储 ，记录数据大小*/
         reqlen = slen;
     }
     /* We need space for both the length of the previous entry and
      * the length of the payload. */
+    /* 加上存储前项大小的大小 */
     reqlen += zipStorePrevEntryLength(NULL,prevlen);
+    /* 加上存储编码的大小 */
     reqlen += zipStoreEntryEncoding(NULL,encoding,slen);
 
     /* When the insert position is not equal to the tail, we need to
      * make sure that the next entry can hold this entry's length in
      * its prevlen field. */
+    /* 翻译:当插入点不是结尾的时候，我们需要确定下个项可以在它的prevlen存储
+    我们马上要插入的本项的长度*/
     int forcelarge = 0;
+    /* 然后如果不是结尾
+    获取新项大小和前项大小分别存到prelen所需要的prelensize之差
+    其实这里的意图是我们如果插入了一个项，下一个项的存储prelen的
+    prelensize是可能发生变化的，这也决定是我们需要更大的空间还是更小 */
+    /* nextdiff=4/0/-4 4说明我们插入新项后下一个项需要+4的空间记录本项大小，
+    -4则说明下一个项可以只需要1字节就可以记录本项大小 */
     nextdiff = (p[0] != ZIP_END) ? zipPrevLenByteDiff(p,reqlen) : 0;
+    /* 如果我们插入以后下一个项需要记录的前项大小的大小变小了，而且本项的大小比4小 */
+    /* 那么我们后面resize可能会“减少”，这也被 antirez 当年标记为bug，所以让nextdiff=0就行了，
+    然后forcelarge置为1 */
     if (nextdiff == -4 && reqlen < 4) {
         nextdiff = 0;
         forcelarge = 1;
     }
 
     /* Store offset because a realloc may change the address of zl. */
-    offset = p-zl;
+    offset = p-zl; /* 存储p偏移量 */
+    /* zlist新的大小 是当前大小 + 新项的大小加上由于插入新项所导致prevlensize的变化*/
     newlen = curlen+reqlen+nextdiff;
-    zl = ziplistResize(zl,newlen);
-    p = zl+offset;
+    zl = ziplistResize(zl,newlen); /* 扩容 */
+    p = zl+offset;/* 重新获取p */
 
     /* Apply memory move when necessary and update tail offset. */
     if (p[0] != ZIP_END) {
         /* Subtract one because of the ZIP_END bytes */
+        /* 插入的新项 p后面的所有项向后移动，貌似并不移动 ZIP_END
+        不过可以看到一个nextdiff 意味着如果nextdiff==4 插入点的下一个项
+        |prevlensize[1]|encoding... ---> |prevlensize[5]|encoding...
+        需要一个额外的空间存储，于是乎将p之前的4字节也拷贝过来（反正之后会覆盖掉），
+        但不过我们可能需要注意如果p-nextdiff会不会越界呢？也就是p-4会不会跑到
+        zl之前呢？答案是不会的，注意这里的情况是有一个1字节的prevlen在记录前项的长度，
+        这意味着前一个项至少有4+4+2=10B的压缩列表头在，所以我们根本不用担心*/
         memmove(p+reqlen,p-nextdiff,curlen-offset-1+nextdiff);
 
+
+        /*我们将本项大小存储到下一个项的prevlen中，
+        可以理解为 next->prev = cur; */
+
         /* Encode this entry's raw length in the next entry. */
+        /* 如果 forcelarge 成立说明了我们的新项大小 < 4
+        而且 nextdiff == -4 , nextdiff == 0, 那么我们让下一个项的prevlensize
+        使用5字节去记录本项的长度，否则就根据是扩容还是缩小来决定是用1,5字节
+        来记录本项的长度*/
         if (forcelarge)
             zipStorePrevEntryLengthLarge(p+reqlen,reqlen);
         else
             zipStorePrevEntryLength(p+reqlen,reqlen);
 
         /* Update offset for tail */
+        /* 更新zltail （1）*/
         ZIPLIST_TAIL_OFFSET(zl) =
             intrev32ifbe(intrev32ifbe(ZIPLIST_TAIL_OFFSET(zl))+reqlen);
 
         /* When the tail contains more than one entry, we need to take
          * "nextdiff" in account as well. Otherwise, a change in the
          * size of prevlen doesn't have an effect on the *tail* offset. */
+        /* 更新zltail （2）*/
+        /* 先获取下一个项到"tail"中，如果下一个项不是尾项，
+        则让尾项的偏移量+nextdiff,因为如果下一个项是尾项，尾项的偏移增加量
+        就是添加新项的大小，如果不是尾项，尾项的偏移增加量是添加新项的大小加上下一个项的为
+        记录prevlen而改变的大小nextdiff。
+        */
         assert(zipEntrySafe(zl, newlen, p+reqlen, &tail, 1));
         if (p[reqlen+tail.headersize+tail.len] != ZIP_END) {
             ZIPLIST_TAIL_OFFSET(zl) =
@@ -1069,27 +1169,36 @@ unsigned char *__ziplistInsert(unsigned char *zl, unsigned char *p, unsigned cha
         }
     } else {
         /* This element will be the new tail. */
+        /* 说明在列表的最后插入，这个项将会是新的尾项，更新zltail */
         ZIPLIST_TAIL_OFFSET(zl) = intrev32ifbe(p-zl);
     }
 
     /* When nextdiff != 0, the raw length of the next entry has changed, so
      * we need to cascade the update throughout the ziplist */
+    /* 如果产生了下一个项的大小的改变，则我们需要考虑连锁更新 */
     if (nextdiff != 0) {
+        /* 首先记录一下本项原始的偏移量 */
         offset = p-zl;
+        /* 然后对下一个项进行连锁更新(里面会可能realloc) */
         zl = __ziplistCascadeUpdate(zl,p+reqlen);
+        /* 然后更新的p */
         p = zl+offset;
     }
 
     /* Write the entry */
+    /* 在本项记录前一项的大小 */
     p += zipStorePrevEntryLength(p,prevlen);
+    /* 在本项记录编码（会包含本项的长度） */
     p += zipStoreEntryEncoding(p,encoding,slen);
     if (ZIP_IS_STR(encoding)) {
+        /* 数字的话 */
         /* 如果是字符串则将字符串拷贝到p的位置 */
         memcpy(p,s,slen);
     } else {
         /* 否则以整数存储 */
         zipSaveInteger(p,value,encoding);
     }
+    /* 将压缩列表总长度+1 */
     ZIPLIST_INCR_LENGTH(zl,1);
     return zl;
 }
