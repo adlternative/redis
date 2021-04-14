@@ -40,6 +40,8 @@
 
 #include "config.h"
 
+/* 注意到redis hook的方法是注册一个宏 然后加上 likely的分支预测优化，
+接着如果断言错误则调用真正的接口，打印错误原因，文件名，行数 */
 #define assert(_e) (likely((_e))?(void)0 : (_serverAssert(#_e,__FILE__,__LINE__),redis_unreachable()))
 #define panic(...) _serverPanic(__FILE__,__LINE__,__VA_ARGS__),redis_unreachable()
 
