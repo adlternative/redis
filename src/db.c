@@ -1030,6 +1030,7 @@ void lastsaveCommand(client *c) {
     addReplyLongLong(c,server.lastsave);
 }
 
+/* 获得一个对象的类型的字符串 */
 char* getObjectTypeName(robj *o) {
     char* type;
     if (o == NULL) {

@@ -69,7 +69,7 @@
  * ===
  *
  * Both the dense and sparse representation have a 16 byte header as follows:
- *
+ * 稠密模式和稀疏模式的 16字节头字段 表现出下面的样子：
  * +------+---+-----+----------+
  * | HYLL | E | N/U | Cardin.  |
  * +------+---+-----+----------+
@@ -77,7 +77,8 @@
  * The first 4 bytes are a magic string set to the bytes "HYLL".
  * "E" is one byte encoding, currently set to HLL_DENSE or
  * HLL_SPARSE. N/U are three not used bytes.
- *
+ * 前四个字节是魔术 HYLL E 是编码 HLL_DENSE 或者 HLL_SPARSE
+ *  N/U 是不用的字节
  * The "Cardin." field is a 64 bit integer stored in little endian format
  * with the latest cardinality computed that can be reused if the data
  * structure was not modified since the last computation (this is useful
@@ -97,15 +98,16 @@
  * ===
  *
  * The dense representation used by Redis is the following:
- *
+ * 稠密模式是下面这样的
  * +--------+--------+--------+------//      //--+
  * |11000000|22221111|33333322|55444444 ....     |
  * +--------+--------+--------+------//      //--+
  *
  * The 6 bits counters are encoded one after the other starting from the
  * LSB to the MSB, and using the next bytes as needed.
- * 6位计数器从LSB到MSB依次编码，并根据需要使用下一个字节。
+ * 6位计数器从最低有效位到最高有效位依次编码，并根据需要使用下一个字节的内容。
  * Sparse representation
+ * 稀疏模式的描述
  * ===
  *
  * The sparse representation encodes registers using a run length
@@ -118,7 +120,7 @@
  * by the six bits 'xxxxxx', plus 1, means that there are N registers set
  * to 0. This opcode can represent from 1 to 64 contiguous registers set
  * to the value of 0.
- * 零操作码表示为00xxxxxx。由6位“xxxxxx”加1表示的6位整数表示有N个寄存器被设为0。
+ * ZERO 操作码表示为00xxxxxx。由6位“xxxxxx”加1表示的6位整数，表示有N个寄存器被设为0。
  * 这个操作码可以表示设置为0的1到64个连续寄存器。
  *
  * XZERO opcode is represented by two bytes 01xxxxxx yyyyyyyy. The 14-bit
@@ -148,17 +150,18 @@
  *
  * 稀疏表示不能表示值大于32的寄存器，
  * 然而，我们在具有基数的HLL中找到这样的寄存器是非常不可能的，
- * 在这种情况下，稀疏表示仍然比密集表示更有效的内存。当这种情况发生时，
+ * 在这种情况下，稀疏表示仍然比密集表示更有效的内存。当这种情况（值>32）发生时，
  * HLL被转换为密集表示。
  * The sparse representation is purely positional. For example a sparse
  * representation of an empty HLL is just: XZERO:16384.
- * 稀疏表示纯粹是位置表示。例如，空HLL的稀疏表示就是:XZERO:16384。
+ * 稀疏表示纯粹是位置表示。例如，空HLL的稀疏表示就是:XZERO:16384。(译注:空HLL 就是 16384个0么？)
  *
  * An HLL having only 3 non-zero registers at position 1000, 1020, 1021
  * respectively set to 2, 3, 3, is represented by the following three
  * opcodes:
  *
- * 一个只有3个非零寄存器的HLL(1000, 1020, 1021)分别设置为2,3,3，用以下3个操作码表示:
+ * 一个只有3个非零寄存器的HLL在坐标1000, 1020, 1021处分别设置为2,3,3，
+ * 用以下3个操作码表示:
  * XZERO:1000 (Registers 0-999 are set to 0)
  * VAL:2,1    (1 register set to value 2, that is register 1000)
  * ZERO:19    (Registers 1001-1019 set to 0)
@@ -176,8 +179,8 @@
  * samples per cardinality (when the set was not representable because
  * of registers with too big value, the dense representation size was used
  * as a sample).
- * 下表显示了平均基数与使用的字节，100个样本每个基数(当集合不能表示，
- * 因为寄存器的值太大，密集表示大小被用作一个样本)。
+ * 下表显示了平均基数与使用的字节，每个基数100个样本(当集合不能表示，
+ * 因为寄存器的值太大，稠密表示的大小被用作一个样本)。
  *
  * 100 267
  * 200 485
@@ -205,36 +208,36 @@
  * memory savings. The exact maximum length of the sparse representation
  * when this implementation switches to the dense representation is
  * configured via the define server.hll_sparse_max_bytes.
- * 密集表示使用12288字节，所以在~2000-3000的基数上有很大的优势。
+ * 密集模式使用12288字节，所以在~2000-3000的基数上有很大的优势。
  * 对于更大的基数，更新稀疏表示所涉及的常数时间并不因内存节省而合理。
- * 当这个实现切换到密集表示时，稀疏表示的确切最大长度通过
+ * 当这个实现切换到密集模式时，稀疏表示的确切最大长度通过
  * define server.hll_sparse_max_bytes配置。
  */
 
 struct hllhdr {
-    char magic[4];      /* "HYLL" */ /* 魔数 */
-    uint8_t encoding;   /* HLL_DENSE or HLL_SPARSE. */ /* 两种不同的编码 */
-    uint8_t notused[3]; /* Reserved for future use, must be zero. */ /* 没有用 */
-    uint8_t card[8];    /* Cached cardinality, little endian. */  /* 缓存基数 小端*/
+    char magic[4];       /* "HYLL" */ /* 魔数 */
+    uint8_t encoding;    /* HLL_DENSE or HLL_SPARSE. */ /* 两种不同的编码 */
+    uint8_t notused[3];  /* Reserved for future use, must be zero. */ /* 没有用 */
+    uint8_t card[8];     /* Cached cardinality, little endian. */  /* 缓存基数 小端*/
     uint8_t registers[]; /* Data bytes. */ /* 数据内容? */
 };
 
-/* The cached cardinality MSB is used to signal validity of the cached value. */
-#define HLL_INVALIDATE_CACHE(hdr) (hdr)->card[7] |= (1<<7)
-#define HLL_VALID_CACHE(hdr) (((hdr)->card[7] & (1<<7)) == 0)
+/* The cached cardinality MSB is used to signal validity of the cached value. */ /* 缓存的基数MSB用于表示缓存值的有效性。 */
+#define HLL_INVALIDATE_CACHE(hdr) (hdr)->card[7] |= (1<<7) //使得一个基数缓存无效 基数缓存card的最后一位置1
+#define HLL_VALID_CACHE(hdr) (((hdr)->card[7] & (1<<7)) == 0) //有效的基数缓存card的最后一位为0
 
-#define HLL_P 14 /* The greater is P, the smaller the error. */
+#define HLL_P 14 /* The greater is P, the smaller the error. */ /* 更大的是P，更小的是错误？ */
 #define HLL_Q (64-HLL_P) /* The number of bits of the hash value used for
-                            determining the number of leading zeros. */
-#define HLL_REGISTERS (1<<HLL_P) /* With P=14, 16384 registers. */
-#define HLL_P_MASK (HLL_REGISTERS-1) /* Mask to index register. */ /* 16383 */
-#define HLL_BITS 6 /* Enough to count up to 63 leading zeroes. */
-#define HLL_REGISTER_MAX ((1<<HLL_BITS)-1) /* 63 */
-#define HLL_HDR_SIZE sizeof(struct hllhdr)
-#define HLL_DENSE_SIZE (HLL_HDR_SIZE+((HLL_REGISTERS*HLL_BITS+7)/8)) /* 稠密存储大小 */
+                            determining the number of leading zeros. */ /* 哈希值的比特数用来决定前置0的数量 */
+#define HLL_REGISTERS (1<<HLL_P) /* With P=14, 16384 registers. */ /* HLL 的寄存器数量 16384 */
+#define HLL_P_MASK (HLL_REGISTERS-1) /* Mask to index register. */ /* HLL 的寄存器数量掩码 16383 */
+#define HLL_BITS 6 /* Enough to count up to 63 leading zeroes. */ /* 6位 足够用来计算63个前导0的数量 */
+#define HLL_REGISTER_MAX ((1<<HLL_BITS)-1) /* 寄存器的最大值 63 */
+#define HLL_HDR_SIZE sizeof(struct hllhdr) /* 结构体头大小 */
+#define HLL_DENSE_SIZE (HLL_HDR_SIZE+((HLL_REGISTERS*HLL_BITS+7)/8)) /* 稠密存储Byte大小：(头大小+16384个6B+7)/8 */
 #define HLL_DENSE 0 /* Dense encoding. */
 #define HLL_SPARSE 1 /* Sparse encoding. */
-#define HLL_RAW 255 /* Only used internally, never exposed. */
+#define HLL_RAW 255 /* Only used internally, never exposed. */ /* 原始的表示方式 貌似是直接用数组 */
 #define HLL_MAX_ENCODING 1
 
 static char *invalid_hll_err = "-INVALIDOBJ Corrupted HLL object detected";
@@ -372,7 +375,7 @@ static char *invalid_hll_err = "-INVALIDOBJ Corrupted HLL object detected";
  target是我们需要获得目标值，p是桶数组，regnum是桶坐标 */
 #define HLL_DENSE_GET_REGISTER(target,p,regnum) do { \
     uint8_t *_p = (uint8_t*) p; /* p是哈希桶*/ \
-    unsigned long _byte = regnum*HLL_BITS/8; /* 获得对应桶坐标*6/8的值 这是＂真实＂的对应桶坐标
+    unsigned long _byte = regnum*HLL_BITS/8; /* 获得对应桶坐标*6/8的值 这是＂真实＂的对应桶坐标 就是数组的index
   　因为target<2^6 所以只用） */ \
     unsigned long _fb = regnum*HLL_BITS&7; /* 获得在该桶中存储的bit大小 */ \
     unsigned long _fb8 = 8 - _fb; /* 获得在下一个桶中存储的bit大小*/ \

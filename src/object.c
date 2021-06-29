@@ -38,7 +38,11 @@
 
 /* ===================== Creation and parsing of objects ==================== */
 
+/* 创建一个对象 */
 robj *createObject(int type, void *ptr) {
+    /* 分配内存，设置类型，
+    链接数据结构指针ptr,
+    设置引用计数1  */
     robj *o = zmalloc(sizeof(*o));
     o->type = type;
     o->encoding = OBJ_ENCODING_RAW;
@@ -47,9 +51,12 @@ robj *createObject(int type, void *ptr) {
 
     /* Set the LRU to the current lruclock (minutes resolution), or
      * alternatively the LFU counter. */
+    /* 似乎是设置一个时间值（可能跟这个对象何时会被淘汰有关） */
     if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+        /* 当前的时间*256|0x101？ */
         o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
     } else {
+        /* 获得当前的lru时间 */
         o->lru = LRU_CLOCK();
     }
     return o;
@@ -74,6 +81,7 @@ robj *makeObjectShared(robj *o) {
 
 /* Create a string object with encoding OBJ_ENCODING_RAW, that is a plain
  * string object where o->ptr points to a proper sds string. */
+/* 我们看到这个raw的编码方式调用createObject创建字符串 */
 robj *createRawStringObject(const char *ptr, size_t len) {
     return createObject(OBJ_STRING, sdsnewlen(ptr,len));
 }
@@ -81,8 +89,10 @@ robj *createRawStringObject(const char *ptr, size_t len) {
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
+/* 我们看到这个embstr的编码方式可以为对象一次malloc */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
+    /* 你想的没错：sh指向对象后面的sds的hdr */
     struct sdshdr8 *sh = (void*)(o+1);
 
     o->type = OBJ_STRING;
@@ -94,7 +104,7 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     } else {
         o->lru = LRU_CLOCK();
     }
-
+    /* 设置hdr属性 */
     sh->len = len;
     sh->alloc = len;
     sh->flags = SDS_TYPE_8;
@@ -117,6 +127,7 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
  * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
+    /* 长度<=44 才是embstr 不知道为什么是这个魔数 上面的英文说是和jemalloc有关 */
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
         return createEmbeddedStringObject(ptr,len);
     else

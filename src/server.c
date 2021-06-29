@@ -2833,6 +2833,8 @@ int restartServer(int flags, mstime_t delay) {
     return C_ERR; /* Never reached. */
 }
 
+/* 读取redis服务器的oom分数，越高越容易被杀
+http://lxr.linux.no/linux+v2.6.32/Documentation/filesystems/proc.txt#L1188 */
 static void readOOMScoreAdj(void) {
 #ifdef HAVE_PROC_OOM_SCORE_ADJ
     char buf[64];
@@ -2852,9 +2854,11 @@ static void readOOMScoreAdj(void) {
  * A process_class value of -1 implies OOM_CONFIG_MASTER or OOM_CONFIG_REPLICA,
  * depending on current role.
  */
+/* 指定进程类，设置oom分数（server有一个专门的oom_score_adj_values数组） */
 int setOOMScoreAdj(int process_class) {
 
     if (server.oom_score_adj == OOM_SCORE_ADJ_NO) return C_OK;
+    /* 似乎是主服务器的分数会比从服务器更低，更不容易被杀 0 200 */
     if (process_class == -1)
         process_class = (server.masterhost ? CONFIG_OOM_REPLICA : CONFIG_OOM_MASTER);
 
@@ -2973,6 +2977,7 @@ void adjustOpenFilesLimit(void) {
 
 /* Check that server.tcp_backlog can be actually enforced in Linux according
  * to the value of /proc/sys/net/core/somaxconn, or warn about it. */
+/* 貌似的最大连接数 我这是4096 （这可能会和listen的第二个参数有关）*/
 void checkTcpBacklogSettings(void) {
 #ifdef HAVE_PROC_SOMAXCONN
     FILE *fp = fopen("/proc/sys/net/core/somaxconn","r");
@@ -3333,6 +3338,7 @@ void initServer(void) {
      * no explicit limit in the user provided configuration we set a limit
      * at 3 GB using maxmemory with 'noeviction' policy'. This avoids
      * useless crashes of the Redis instance for out of memory. */
+    /* 设置了一个3GB的内容限制 */
     if (server.arch_bits == 32 && server.maxmemory == 0) {
         serverLog(LL_WARNING,"Warning: 32 bit instance detected but no memory limit set. Setting 3 GB maxmemory limit with 'noeviction' policy now.");
         server.maxmemory = 3072LL*(1024*1024); /* 3 GB */
@@ -5521,6 +5527,7 @@ void usage(void) {
     exit(1);
 }
 
+/* logo */
 void redisAsciiArt(void) {
 #include "asciilogo.h"
     char *buf = zmalloc(1024*16);
@@ -6072,34 +6079,52 @@ int main(int argc, char **argv) {
 #ifdef INIT_SETPROCTITLE_REPLACEMENT
     spt_init(argc, argv);
 #endif
+    /* 设置本地化语言？ */
     setlocale(LC_COLLATE,"");
+    /* 设置时区 */
     tzset(); /* Populates 'timezone' global. */
+    /* 设置动态分配内存越界回调 */
     zmalloc_set_oom_handler(redisOutOfMemoryHandler);
+    /* 设置随机数种子 时间和pid */
     srand(time(NULL)^getpid());
     srandom(time(NULL)^getpid());
+    /* 获得精确到ms的时间 */
     gettimeofday(&tv,NULL);
+    /* 似乎还是一个随机的种子 */
     init_genrand64(((long long) tv.tv_sec * 1000000 + tv.tv_usec) ^ getpid());
+    /* 一个16KB表，暂时还不知道是什么用 */
     crc64_init();
 
     /* Store umask value. Because umask(2) only offers a set-and-get API we have
      * to reset it and restore it back. We do this early to avoid a potential
      * race condition with threads that could be creating files or directories.
      */
+    /* 似乎设置文件创建掩码 ，
+    否则之后使用fchmod可能会没有注意到 */
     umask(server.umask = umask(0777));
 
     uint8_t hashseed[16];
+    /* 获得一个随机的sha256的哈希值 */
     getRandomBytes(hashseed,sizeof(hashseed));
+    /* 设置全局的哈希函数 16B seed */
     dictSetHashFunctionSeed(hashseed);
+    /* 哨兵模式 */
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    /* 初始化服务器配置 */
     initServerConfig();
+    /* 访问控制链初始化 */
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
+    /* redis模块初始化模块系统 */
     moduleInitModulesSystem();
+    /* 貌似支持openssl */
     tlsInit();
 
     /* Store the executable path and arguments in a safe place in order
      * to be able to restart the server later. */
+    /* 获得执行的绝对路径 */
     server.executable = getAbsolutePath(argv[0]);
+    /* 执行参数保存 */
     server.exec_argv = zmalloc(sizeof(char*)*(argc+1));
     server.exec_argv[argc] = NULL;
     for (j = 0; j < argc; j++) server.exec_argv[j] = zstrdup(argv[j]);
@@ -6107,6 +6132,7 @@ int main(int argc, char **argv) {
     /* We need to init sentinel right now as parsing the configuration file
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
+    /* 如果开启哨兵模式则初始化哨兵配置和初始化哨兵 */
     if (server.sentinel_mode) {
         initSentinelConfig();
         initSentinel();
@@ -6115,11 +6141,12 @@ int main(int argc, char **argv) {
     /* Check if we need to start in redis-check-rdb/aof mode. We just execute
      * the program main. However the program is part of the Redis executable
      * so that we can easily execute an RDB check on loading errors. */
+    /* 貌似是两种特殊的模式会检查redis的rdb和aof */
     if (strstr(argv[0],"redis-check-rdb") != NULL)
         redis_check_rdb_main(argc,argv,NULL);
     else if (strstr(argv[0],"redis-check-aof") != NULL)
         redis_check_aof_main(argc,argv);
-
+    /* 检验命令行参数 */
     if (argc >= 2) {
         j = 1; /* First option to parse in argv[] */
         sds options = sdsempty();
@@ -6131,6 +6158,7 @@ int main(int argc, char **argv) {
             strcmp(argv[1], "-h") == 0) usage();
         if (strcmp(argv[1], "--test-memory") == 0) {
             if (argc == 3) {
+                /* 进行了某种内存的检测(和终端的屏幕有点关系) */
                 memtest(atoi(argv[2]),50);
                 exit(0);
             } else {
@@ -6172,21 +6200,24 @@ int main(int argc, char **argv) {
             }
             j++;
         }
-
+        /* 错误：使用哨兵模式却没有配置文件 */
         if (server.sentinel_mode && ! server.configfile) {
             serverLog(LL_WARNING,
                 "Sentinel needs config file on disk to save state.  Exiting...");
             exit(1);
         }
+        /* 加载服务器的配置 */
         loadServerConfig(server.configfile, config_from_stdin, options);
+        /* 加载哨兵的配置 */
         if (server.sentinel_mode) loadSentinelConfigFromQueue();
         sdsfree(options);
     }
 
     server.supervised = redisIsSupervised(server.supervised_mode);
     int background = server.daemonize && !server.supervised;
+    /* 似乎根据配置是否开启守护进程 */
     if (background) daemonize();
-
+    /* 打印一些日志 */
     serverLog(LL_WARNING, "oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo");
     serverLog(LL_WARNING,
         "Redis version=%s, bits=%d, commit=%s, modified=%d, pid=%d, just started",
@@ -6201,12 +6232,15 @@ int main(int argc, char **argv) {
     } else {
         serverLog(LL_WARNING, "Configuration loaded");
     }
-
+    /* 读取 /proc/self/oom_score_adj 设置oom分数 */
     readOOMScoreAdj();
+    /* 这里还初始化了服务器各种数据结构 */
     initServer();
     if (background || server.pidfile) createPidFile();
     if (server.set_proc_title) redisSetProcTitle(NULL);
+    /* logo */
     redisAsciiArt();
+    /* 检验系统最大连接数 */
     checkTcpBacklogSettings();
 
     if (!server.sentinel_mode) {
@@ -6270,10 +6304,11 @@ int main(int argc, char **argv) {
     if (server.maxmemory > 0 && server.maxmemory < 1024*1024) {
         serverLog(LL_WARNING,"WARNING: You specified a maxmemory value that is less than 1MB (current value is %llu bytes). Are you sure this is what you really want?", server.maxmemory);
     }
-
+    /* 设置cpu亲和 可以配置 */
     redisSetCpuAffinity(server.server_cpulist);
+    /* 设置oom分数 */
     setOOMScoreAdj(-1);
-
+    /* 似乎是开始epoll循环了 */
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;
